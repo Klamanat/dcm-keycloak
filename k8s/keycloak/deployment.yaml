@@ -30,13 +30,11 @@ spec:
             - until pg_isready -h postgres -p 5432 -U keycloak -t 2; do echo "waiting for postgres..."; sleep 2; done
       containers:
         - name: keycloak
-          # local: build ด้วย docker build -t keycloak-custom:latest .
-          # prod:  ใช้ image จาก registry เช่น ghcr.io/org/keycloak-custom:1.0.0
-          image: keycloak-custom:latest
+          image: keycloak-dcm:latest
           imagePullPolicy: IfNotPresent
           args:
             - start
-            - --optimized      # ข้าม build step เพราะ pre-built ใน Dockerfile แล้ว
+            - --optimized
             - --import-realm
 
           env:
@@ -68,16 +66,9 @@ spec:
                   name: keycloak-secret
                   key: KEYCLOAK_ADMIN_PASSWORD
 
-            # ===== Network / Proxy =====
-            # KC_PROXY deprecated ใน Keycloak 24+ → ใช้ KC_PROXY_HEADERS แทน
+            # ===== Network =====
             - name: KC_PROXY_HEADERS
               value: xforwarded
-            - name: KC_HOSTNAME
-              value: "localhost"   # local: localhost / prod: เปลี่ยนเป็น domain จริง
-            - name: KC_HOSTNAME_PORT
-              value: "8080"        # local: port-forward port / prod: ลบบรรทัดนี้ออก
-            - name: KC_HOSTNAME_STRICT
-              value: "false"   # TODO: เปลี่ยนเป็น true เมื่อ deploy prod จริง
             - name: KC_HTTP_ENABLED
               value: "true"
 
@@ -86,6 +77,11 @@ spec:
               value: "true"
             - name: KC_METRICS_ENABLED
               value: "true"
+
+          # ค่า env ที่ต่างกันแต่ละ env อ่านจาก ConfigMap (envs/<env>/keycloak-env.yaml)
+          envFrom:
+            - configMapRef:
+                name: keycloak-env
 
           ports:
             - name: http
@@ -106,16 +102,14 @@ spec:
               cpu: "2"
               memory: 1Gi
 
-          # startupProbe รอ Keycloak boot ก่อน (อาจช้า 60-120 วิ)
           startupProbe:
             httpGet:
               path: /health/started
               port: 9000
             initialDelaySeconds: 30
             periodSeconds: 10
-            failureThreshold: 20  # รอได้สูงสุด 30 + 20*10 = 230 วิ
+            failureThreshold: 20
 
-          # readinessProbe ใช้ management port (9000) ที่มี /health/ready
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -124,7 +118,6 @@ spec:
             periodSeconds: 10
             failureThreshold: 3
 
-          # livenessProbe เริ่มหลัง startupProbe pass เท่านั้น
           livenessProbe:
             httpGet:
               path: /health/live

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-env
+  namespace: keycloak
+data:
+  KC_HOSTNAME: "localhost"
+  KC_HOSTNAME_PORT: "8080"
+  KC_HOSTNAME_STRICT: "false"

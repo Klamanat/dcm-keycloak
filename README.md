@@ -1,25 +1,57 @@
-# Keycloak on Kubernetes
+# keycloak-dcm
 
-Keycloak 26.5.7 + PostgreSQL 16 บน Kubernetes
+Keycloak 26.5.7 + PostgreSQL บน Kubernetes พร้อม Custom Theme (Keycloakify) และ SPI (Java)
 
 ## โครงสร้างไฟล์
 
 ```
-keycloak/
-├── namespace.yaml
-├── secret.yaml              # Keycloak admin credentials
-├── deployment.yaml          # Keycloak deployment
-├── service.yaml
-├── ingress.yaml             # ใช้สำหรับ production เท่านั้น
+keycloak-dcm/
+├── Dockerfile
+├── k8s/
+│   ├── namespace.yaml
+│   ├── keycloak/
+│   │   ├── deployment.yaml          # shared ทุก env (อ่านจาก ConfigMap keycloak-env)
+│   │   └── service.yaml
+│   ├── postgres/
+│   │   ├── deployment.yaml
+│   │   └── service.yaml
+│   └── envs/
+│       ├── local/
+│       │   ├── keycloak-env.yaml    # ConfigMap: KC_HOSTNAME=localhost
+│       │   ├── keycloak-secret.yaml
+│       │   ├── postgres-secret.yaml
+│       │   └── postgres-pvc.yaml    # 1Gi
+│       ├── staging/
+│       │   ├── keycloak-env.yaml    # ConfigMap: KC_HOSTNAME=staging...
+│       │   ├── keycloak-secret.yaml # gitignored
+│       │   ├── postgres-secret.yaml # gitignored
+│       │   ├── postgres-pvc.yaml    # 5Gi
+│       │   └── ingress.yaml
+│       └── prod/
+│           ├── keycloak-env.yaml    # ConfigMap: KC_HOSTNAME=prod...
+│           ├── keycloak-secret.yaml # gitignored
+│           ├── postgres-secret.yaml # gitignored
+│           ├── postgres-pvc.yaml    # 10Gi
+│           └── ingress.yaml
 ├── realm/
-│   ├── realm.json
-│   └── realm-master.json
-└── postgres/
-    ├── secret.yaml          # PostgreSQL credentials
-    ├── pvc.yaml
-    ├── deployment.yaml
-    └── service.yaml
+│   └── realm.json
+├── theme/                           # Keycloakify v11 (React + Vite)
+└── spi/                             # Java SPI (Maven)
 ```
+
+---
+
+## Build Docker Image
+
+```bash
+# Build image รวม theme + SPI
+docker build -t keycloak-dcm:latest .
+```
+
+> ต้องมี `npm install` ใน `theme/` ก่อน build ครั้งแรก:
+> ```bash
+> cd theme && npm install
+> ```
 
 ---
 
@@ -27,27 +59,24 @@ keycloak/
 
 ### ข้อกำหนด
 
-- Kubernetes cluster (minikube / kind / Docker Desktop)
+- Docker Desktop พร้อม Kubernetes เปิดอยู่
 - `kubectl` ติดตั้งและ config แล้ว
 
 ### 1. Apply manifests
 
 ```bash
-kubectl apply -f namespace.yaml
-kubectl apply -f postgres/secret.yaml
-kubectl apply -f postgres/pvc.yaml
-kubectl apply -f postgres/service.yaml
-kubectl apply -f postgres/deployment.yaml
-kubectl apply -f secret.yaml
-kubectl apply -f service.yaml
-kubectl apply -f deployment.yaml
+# Shared resources
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/postgres/
+kubectl apply -f k8s/keycloak/
+
+# Local-specific (secrets, ConfigMap, PVC)
+kubectl apply -f k8s/envs/local/
 ```
 
 ### 1.1 สร้าง ConfigMap สำหรับ Realm
 
-Deployment ใช้ `--import-realm` ซึ่ง Keycloak จะอ่านไฟล์จาก ConfigMap `keycloak-realm` ที่ mount ไว้ที่ `/opt/keycloak/data/import`
-
-> **สำคัญ:** ใช้เฉพาะ `realm.json` เท่านั้น — **ห้ามใส่ `realm-master.json`** เพราะจะทำให้ Keycloak crash ตอน startup (`adminRealm is null`)
+> **สำคัญ:** ใช้เฉพาะ `realm.json` เท่านั้น — **ห้ามใส่ `realm-master.json`** เพราะจะทำให้ Keycloak crash (`adminRealm is null`)
 
 ```bash
 # สร้าง ConfigMap ครั้งแรก
@@ -56,23 +85,14 @@ kubectl create configmap keycloak-realm \
   -n keycloak
 ```
 
-**อัปเดต ConfigMap เมื่อแก้ไข realm.json:**
+**อัปเดตเมื่อแก้ไข realm.json:**
 
 ```bash
-# ลบ ConfigMap เก่าแล้วสร้างใหม่
 kubectl delete configmap keycloak-realm -n keycloak
 kubectl create configmap keycloak-realm \
   --from-file=realm.json=realm/realm.json \
   -n keycloak
-
-# Restart Keycloak เพื่อ import realm ใหม่
 kubectl rollout restart deployment/keycloak -n keycloak
-```
-
-**ตรวจสอบ ConfigMap:**
-
-```bash
-kubectl get configmap keycloak-realm -n keycloak -o yaml
 ```
 
 ### 2. รอให้ทุก pod พร้อม
@@ -81,7 +101,7 @@ kubectl get configmap keycloak-realm -n keycloak -o yaml
 kubectl get pods -n keycloak -w
 ```
 
-ทุก pod ต้องเป็น `Running` และ `READY 1/1` ก่อนไปขั้นต่อไป
+ทุก pod ต้องเป็น `Running` และ `READY 1/1`
 
 ### 3. Port-forward
 
@@ -93,8 +113,8 @@ kubectl port-forward svc/keycloak 8080:80 -n keycloak
 
 | URL | คำอธิบาย |
 |---|---|
-| `http://localhost:8080` | Keycloak หน้าหลัก |
 | `http://localhost:8080/admin` | Admin Console |
+| `http://localhost:8080/realms/my-realm/account/` | Account Console |
 
 **Default credentials (local):**
 
@@ -103,202 +123,154 @@ kubectl port-forward svc/keycloak 8080:80 -n keycloak
 | Username | `admin` |
 | Password | `admin` |
 
-> ดูหรือเปลี่ยน credentials ได้ใน `secret.yaml` (base64 encoded)
-
 ---
 
-## Custom Theme & SPI ด้วย Keycloakify
-
-ใช้ [Keycloakify v11](https://www.keycloakify.dev/) สร้าง custom theme ด้วย React และ bundle เป็น JAR เข้า Keycloak ผ่าน Docker image
-
-### 1. สร้าง Keycloakify project
-
-```bash
-# scaffold project ใหม่ใน ./theme/
-npx keycloakify@latest init theme
-cd theme
-npm install
-```
-
-### 2. พัฒนา theme
+## Custom Theme (Keycloakify v11)
 
 ```bash
 cd theme
 
-# Start Storybook สำหรับ preview หน้า login, register ฯลฯ
+# Preview ด้วย Storybook
 npm run storybook
 
-# หรือ test กับ Keycloak จริงผ่าน dev-server
-npm run start-keycloak
+# Eject หน้าที่ต้องการ custom
+npx keycloakify eject-page
 ```
-
-ไฟล์ที่แก้บ่อย:
 
 | ไฟล์ | คำอธิบาย |
 |---|---|
-| `src/login/` | หน้า Login, Register, Reset password |
-| `src/account/` | Account Console (ถ้าต้องการ custom) |
-| `src/login/KcPage.tsx` | Entry point ของ theme |
+| `theme/src/login/KcPage.tsx` | Router ของ login theme |
+| `theme/src/login/i18n.ts` | เพิ่ม/แก้ translation |
+| `theme/src/login/KcContext.ts` | Extend KcContext |
 
-### 3. Build JAR
+หลัง deploy: `Realm Settings → Themes → Login Theme → เลือก theme ที่ build`
 
-```bash
-cd theme
-npx keycloakify build
-# ได้ JAR ที่ dist_keycloak/keycloak-theme-*.jar
-```
+---
 
-### 4. Build Docker image
+## Custom SPI (Java)
 
 ```bash
-# จาก root directory (ที่มี Dockerfile)
-docker build -t keycloak-custom:latest .
+cd spi
+mvn package -DskipTests
+# ได้ target/keycloak-spi-1.0.0.jar
 ```
 
-### 5. Deploy
+| SPI | Interface | ตัวอย่างที่มีอยู่ |
+|---|---|---|
+| Event Listener | `EventListenerProvider` | `DcmEventListenerProvider` |
+| Authenticator | `Authenticator` | — |
+| User Storage | `UserStorageProvider` | — |
+| REST endpoint | `RealmResourceProvider` | — |
+| Token Mapper | `ProtocolMapper` | — |
 
-```bash
-# Deployment ใช้ image keycloak-custom:latest + imagePullPolicy: IfNotPresent
-# Docker Desktop จะหยิบ image ที่ build ไว้ local ได้เลย
-kubectl rollout restart deployment/keycloak -n keycloak
-```
+เปิดใช้ Event Listener: `Realm Settings → Events → Event listeners → dcm-event-listener`
 
-### เลือก theme ใน realm
-
-หลัง deploy แล้ว เข้า Admin Console:
-
-```
-Realm Settings → Themes → Login Theme → เลือก theme ที่ build
-```
+สร้าง SPI ใหม่: implement interface + Factory + ลง `META-INF/services/`
 
 ---
 
 ## ทดสอบ my-realm ผ่าน Account Console
 
-หลัง Keycloak start แล้ว (port-forward อยู่ที่ 8080) สามารถเข้า Account Console ของ `my-realm` ได้เลย
-
-### 1. สร้าง user ทดสอบ
-
-เข้า Admin Console แล้วสร้าง user ใน `my-realm`:
+### สร้าง user ทดสอบ
 
 ```
-http://localhost:8080/admin → เลือก realm "my-realm" → Users → Add user
+Admin Console → เลือก realm "my-realm" → Users → Add user
 ```
 
-| Field | ค่าตัวอย่าง |
-|---|---|
-| Username | `testuser` |
-| Email | `test@example.com` |
-| First name | `Test` |
-| Last name | `User` |
+ไปที่ tab **Credentials** → Set password → ปิด Temporary
 
-หลัง Save ไปที่ tab **Credentials** → Set password → ปิด Temporary
-
-### 2. เข้า Account Console
+### เข้า Account Console
 
 ```
 http://localhost:8080/realms/my-realm/account/
 ```
 
-Login ด้วย user ที่สร้างในขั้นตอนที่ 1
-
-### 3. ทดสอบผ่าน curl (optional)
+### ทดสอบด้วย curl
 
 ```bash
-# ขอ token ด้วย Resource Owner Password Grant
+# ขอ token
 curl -s -X POST \
   http://localhost:8080/realms/my-realm/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=password" \
-  -d "client_id=my-app" \
-  -d "username=testuser" \
-  -d "password=<password>" | jq .
+  -d "grant_type=password&client_id=my-app&username=testuser&password=<password>" | jq .
 
-# เช็ค userinfo ด้วย access_token ที่ได้
+# เช็ค userinfo
 curl -s http://localhost:8080/realms/my-realm/protocol/openid-connect/userinfo \
   -H "Authorization: Bearer <access_token>" | jq .
 ```
-
-> **หมายเหตุ:** `my-app` client ใช้ `directAccessGrantsEnabled: true` จึง support Password Grant ได้โดยไม่ต้องใช้ client secret
 
 ---
 
 ## Deploy บน Production
 
-### สิ่งที่ต้องแก้ก่อน deploy
-
-**1. ตั้ง hostname จริงใน `deployment.yaml`:**
+**1. แก้ `k8s/keycloak/deployment.yaml`:**
 
 ```yaml
 - name: KC_HOSTNAME
-  value: "keycloak.example.com"   # เปลี่ยนเป็น domain จริง
+  value: "keycloak.example.com"
 - name: KC_HOSTNAME_STRICT
-  value: "true"                   # เปิด strict mode
+  value: "true"
+- name: KC_HOSTNAME_PORT   # ลบบรรทัดนี้ออก
 ```
 
-**2. ตั้ง hostname และ TLS ใน `ingress.yaml`:**
+**2. แก้ `k8s/keycloak/ingress.yaml`:**
 
 ```yaml
 tls:
-  - hosts:
-      - keycloak.example.com      # เปลี่ยนเป็น domain จริง
-    secretName: keycloak-tls      # สร้าง TLS secret ก่อน
+  - hosts: [keycloak.example.com]
+    secretName: keycloak-tls
 rules:
-  - host: keycloak.example.com    # เปลี่ยนเป็น domain จริง
+  - host: keycloak.example.com
 ```
 
-**3. เปลี่ยน credentials ใน secrets (ห้ามใช้ค่า default ใน prod):**
+**3. เปลี่ยน credentials ใน secrets:**
 
 ```bash
-# encode ค่าใหม่
 echo -n "your-strong-password" | base64
+# แก้ k8s/keycloak/secret.yaml และ k8s/postgres/secret.yaml
 ```
 
-แก้ทั้ง `secret.yaml` และ `postgres/secret.yaml`
-
-**4. Apply ingress เพิ่มเติม:**
+**4. ตั้งค่า secrets ใน overlay (gitignored):**
 
 ```bash
-kubectl apply -f ingress.yaml
+# encode credentials
+echo -n "your-admin" | base64
+echo -n "your-strong-password" | base64
+
+# แก้ k8s/overlays/prod/keycloak-secret.yaml
+# แก้ k8s/overlays/prod/postgres-secret.yaml
 ```
 
-### TLS ด้วย cert-manager (แนะนำ)
+**5. Apply prod:**
 
 ```bash
-# ติดตั้ง cert-manager
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/postgres/
+kubectl apply -f k8s/keycloak/
+kubectl apply -f k8s/envs/prod/
+```
+
+### TLS ด้วย cert-manager
+
+```bash
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-
-# สร้าง Certificate resource แยกต่างหาก หรือใช้ annotation บน ingress
 ```
 
 ---
 
 ## Troubleshooting
 
-**ดู log Keycloak:**
-
 ```bash
+# Log Keycloak
 kubectl logs -n keycloak -l app=keycloak -f
-```
 
-**ดู log PostgreSQL:**
-
-```bash
+# Log PostgreSQL
 kubectl logs -n keycloak -l app=postgres -f
-```
 
-**เช็ค health:**
-
-```bash
-# ผ่าน port-forward management port
+# Health check
 kubectl port-forward svc/keycloak 9000:9000 -n keycloak
-
 curl http://localhost:9000/health/ready
-curl http://localhost:9000/health/live
-```
 
-**ลบทุกอย่างออก:**
-
-```bash
+# ลบทุกอย่าง
 kubectl delete namespace keycloak
 ```
