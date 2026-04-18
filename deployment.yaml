@@ -1,0 +1,141 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: keycloak
+  labels:
+    app: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: wait-for-postgres
+          image: bitnami/postgresql:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - until pg_isready -h postgres -p 5432 -U keycloak -t 2; do echo "waiting for postgres..."; sleep 2; done
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.5.7
+          args:
+            - start
+            - --import-realm
+
+          env:
+            # ===== Database =====
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: jdbc:postgresql://postgres:5432/keycloak
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+
+            # ===== Admin =====
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-secret
+                  key: KEYCLOAK_ADMIN
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-secret
+                  key: KEYCLOAK_ADMIN_PASSWORD
+
+            # ===== Network / Proxy =====
+            # KC_PROXY deprecated ใน Keycloak 24+ → ใช้ KC_PROXY_HEADERS แทน
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HOSTNAME
+              value: "localhost"   # local: localhost / prod: เปลี่ยนเป็น domain จริง
+            - name: KC_HOSTNAME_PORT
+              value: "8080"        # local: port-forward port / prod: ลบบรรทัดนี้ออก
+            - name: KC_HOSTNAME_STRICT
+              value: "false"   # TODO: เปลี่ยนเป็น true เมื่อ deploy prod จริง
+            - name: KC_HTTP_ENABLED
+              value: "true"
+
+            # ===== Observability =====
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "true"
+
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9000
+
+          volumeMounts:
+            - name: realm-config
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+
+          # startupProbe รอ Keycloak boot ก่อน (อาจช้า 60-120 วิ)
+          startupProbe:
+            httpGet:
+              path: /health/started
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 20  # รอได้สูงสุด 30 + 20*10 = 230 วิ
+
+          # readinessProbe ใช้ management port (9000) ที่มี /health/ready
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 9000
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # livenessProbe เริ่มหลัง startupProbe pass เท่านั้น
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 9000
+            initialDelaySeconds: 0
+            periodSeconds: 30
+            failureThreshold: 3
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: realm-config
+          configMap:
+            name: keycloak-realm
