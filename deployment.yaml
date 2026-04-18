@@ -30,9 +30,13 @@ spec:
             - until pg_isready -h postgres -p 5432 -U keycloak -t 2; do echo "waiting for postgres..."; sleep 2; done
       containers:
         - name: keycloak
-          image: quay.io/keycloak/keycloak:26.5.7
+          # local: build ด้วย docker build -t keycloak-custom:latest .
+          # prod:  ใช้ image จาก registry เช่น ghcr.io/org/keycloak-custom:1.0.0
+          image: keycloak-custom:latest
+          imagePullPolicy: IfNotPresent
           args:
             - start
+            - --optimized      # ข้าม build step เพราะ pre-built ใน Dockerfile แล้ว
             - --import-realm
 
           env:

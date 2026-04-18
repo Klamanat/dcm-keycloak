@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ls D:/DCM/keycloak/*.md)"
+      "Bash(ls D:/DCM/keycloak/*.md)",
+      "Bash(npx create-keycloakify@latest theme)"
     ]
   }
 }

@@ -43,6 +43,38 @@ kubectl apply -f service.yaml
 kubectl apply -f deployment.yaml
 ```
 
+### 1.1 สร้าง ConfigMap สำหรับ Realm
+
+Deployment ใช้ `--import-realm` ซึ่ง Keycloak จะอ่านไฟล์จาก ConfigMap `keycloak-realm` ที่ mount ไว้ที่ `/opt/keycloak/data/import`
+
+> **สำคัญ:** ใช้เฉพาะ `realm.json` เท่านั้น — **ห้ามใส่ `realm-master.json`** เพราะจะทำให้ Keycloak crash ตอน startup (`adminRealm is null`)
+
+```bash
+# สร้าง ConfigMap ครั้งแรก
+kubectl create configmap keycloak-realm \
+  --from-file=realm.json=realm/realm.json \
+  -n keycloak
+```
+
+**อัปเดต ConfigMap เมื่อแก้ไข realm.json:**
+
+```bash
+# ลบ ConfigMap เก่าแล้วสร้างใหม่
+kubectl delete configmap keycloak-realm -n keycloak
+kubectl create configmap keycloak-realm \
+  --from-file=realm.json=realm/realm.json \
+  -n keycloak
+
+# Restart Keycloak เพื่อ import realm ใหม่
+kubectl rollout restart deployment/keycloak -n keycloak
+```
+
+**ตรวจสอบ ConfigMap:**
+
+```bash
+kubectl get configmap keycloak-realm -n keycloak -o yaml
+```
+
 ### 2. รอให้ทุก pod พร้อม
 
 ```bash
@@ -72,6 +104,72 @@ kubectl port-forward svc/keycloak 8080:80 -n keycloak
 | Password | `admin` |
 
 > ดูหรือเปลี่ยน credentials ได้ใน `secret.yaml` (base64 encoded)
+
+---
+
+## Custom Theme & SPI ด้วย Keycloakify
+
+ใช้ [Keycloakify v11](https://www.keycloakify.dev/) สร้าง custom theme ด้วย React และ bundle เป็น JAR เข้า Keycloak ผ่าน Docker image
+
+### 1. สร้าง Keycloakify project
+
+```bash
+# scaffold project ใหม่ใน ./theme/
+npx keycloakify@latest init theme
+cd theme
+npm install
+```
+
+### 2. พัฒนา theme
+
+```bash
+cd theme
+
+# Start Storybook สำหรับ preview หน้า login, register ฯลฯ
+npm run storybook
+
+# หรือ test กับ Keycloak จริงผ่าน dev-server
+npm run start-keycloak
+```
+
+ไฟล์ที่แก้บ่อย:
+
+| ไฟล์ | คำอธิบาย |
+|---|---|
+| `src/login/` | หน้า Login, Register, Reset password |
+| `src/account/` | Account Console (ถ้าต้องการ custom) |
+| `src/login/KcPage.tsx` | Entry point ของ theme |
+
+### 3. Build JAR
+
+```bash
+cd theme
+npx keycloakify build
+# ได้ JAR ที่ dist_keycloak/keycloak-theme-*.jar
+```
+
+### 4. Build Docker image
+
+```bash
+# จาก root directory (ที่มี Dockerfile)
+docker build -t keycloak-custom:latest .
+```
+
+### 5. Deploy
+
+```bash
+# Deployment ใช้ image keycloak-custom:latest + imagePullPolicy: IfNotPresent
+# Docker Desktop จะหยิบ image ที่ build ไว้ local ได้เลย
+kubectl rollout restart deployment/keycloak -n keycloak
+```
+
+### เลือก theme ใน realm
+
+หลัง deploy แล้ว เข้า Admin Console:
+
+```
+Realm Settings → Themes → Login Theme → เลือก theme ที่ build
+```
 
 ---
 
