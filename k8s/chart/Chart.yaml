@@ -1,0 +1,6 @@
+apiVersion: v2
+name: keycloak-dcm
+description: Keycloak 26.5.7 with custom theme and SPI
+type: application
+version: 1.0.0
+appVersion: "26.5.7"

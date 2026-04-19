@@ -3,7 +3,9 @@
 # deploy.sh — Deploy ไปยัง Kubernetes
 # ============================================================
 # Usage:
-#   ./scripts/deploy.sh staging     Deploy to staging
+#   ./scripts/deploy.sh dev         Deploy to dev
+#   ./scripts/deploy.sh sit         Deploy to sit
+#   ./scripts/deploy.sh uat         Deploy to uat
 #   ./scripts/deploy.sh prod        Deploy to production
 #   ./scripts/deploy.sh realm       อัปเดต ConfigMap realm เท่านั้น
 # ============================================================
@@ -38,26 +40,17 @@ update_realm() {
 # ---- Apply K8s manifests ------------------------------------
 deploy_env() {
   local env="$1"
-  local env_dir="k8s/envs/$env"
+  local values_file="k8s/values/$env.yaml"
 
-  if [ ! -d "$env_dir" ]; then
-    echo "Error: directory '$env_dir' not found"
-    exit 1
-  fi
-
-  # ตรวจสอบ secret files ยังมี REPLACE_BASE64 อยู่ไหม
-  if grep -r "REPLACE_BASE64" "$env_dir" --include="*.yaml" -q 2>/dev/null; then
-    echo "Error: พบ REPLACE_BASE64 ใน $env_dir — กรุณาแก้ secret ก่อน deploy"
-    echo ""
-    grep -r "REPLACE_BASE64" "$env_dir" --include="*.yaml" -l
+  if [ ! -f "$values_file" ]; then
+    echo "Error: ไม่พบ '$values_file'"
     exit 1
   fi
 
   echo "▶ Deploying to $env..."
-  kubectl apply -f k8s/namespace.yaml
-  kubectl apply -f k8s/postgres/
-  kubectl apply -f k8s/keycloak/
-  kubectl apply -f "$env_dir/"
+  helm upgrade --install keycloak k8s/chart/ \
+    -f "$values_file" \
+    --atomic --timeout 5m
   update_realm
   echo ""
   echo "✔ Deployed to $env"
@@ -67,14 +60,14 @@ deploy_env() {
 
 # ---- Main ---------------------------------------------------
 case "$ENV" in
-  staging|prod)
+  dev|sit|uat|prod)
     deploy_env "$ENV"
     ;;
   realm)
     update_realm
     ;;
   *)
-    echo "Usage: $0 {staging|prod|realm}"
+    echo "Usage: $0 {dev|sit|uat|prod|realm}"
     exit 1
     ;;
 esac

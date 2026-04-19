@@ -1,6 +1,6 @@
 # keycloak-dcm
 
-Keycloak 26.5.7 + PostgreSQL บน Kubernetes พร้อม Custom Theme (Keycloakify) และ SPI (Java)
+Keycloak 26.5.7 + PostgreSQL บน Kubernetes พร้อม Custom Theme (Keycloakify v11) และ SPI (Java)
 
 ## โครงสร้างไฟล์
 
@@ -9,29 +9,39 @@ keycloak-dcm/
 ├── Dockerfile
 ├── docker-compose.yml               # Local development
 ├── k8s/
-│   ├── namespace.yaml
-│   ├── keycloak/
-│   │   ├── deployment.yaml          # shared ทุก env
-│   │   └── service.yaml
-│   ├── postgres/
-│   │   ├── deployment.yaml
-│   │   └── service.yaml
-│   └── envs/
-│       ├── staging/
-│       │   ├── keycloak-env.yaml    # ConfigMap: KC_HOSTNAME=staging...
-│       │   ├── keycloak-secret.yaml # gitignored
-│       │   ├── postgres-secret.yaml # gitignored
-│       │   ├── postgres-pvc.yaml    # 5Gi
-│       │   └── ingress.yaml
-│       └── prod/
-│           ├── keycloak-env.yaml    # ConfigMap: KC_HOSTNAME=prod...
-│           ├── keycloak-secret.yaml # gitignored
-│           ├── postgres-secret.yaml # gitignored
-│           ├── postgres-pvc.yaml    # 10Gi
-│           └── ingress.yaml
+│   ├── chart/                       # Helm chart
+│   │   ├── Chart.yaml
+│   │   ├── values.yaml              # Default values
+│   │   └── templates/
+│   │       ├── namespace.yaml
+│   │       ├── deployment.yaml
+│   │       ├── service.yaml
+│   │       ├── configmap.yaml
+│   │       ├── ingress.yaml
+│   │       └── secret.yaml
+│   ├── values/
+│   │   ├── dev.yaml
+│   │   ├── sit.yaml
+│   │   ├── uat.yaml
+│   │   └── prod.yaml
+│   └── ci/
+│       └── Jenkinsfile
 ├── realm/
 │   └── realm.json
-├── theme/                           # Keycloakify v11 (React + Vite)
+├── theme/                           # Keycloakify v11 (React + Vite + Tailwind)
+│   ├── src/
+│   │   ├── login/
+│   │   │   ├── KcPage.tsx
+│   │   │   ├── KcContext.ts
+│   │   │   ├── i18n.ts
+│   │   │   ├── KcPageStory.tsx
+│   │   │   └── pages/
+│   │   │       ├── Login.tsx
+│   │   │       └── Login.stories.tsx
+│   │   └── index.css
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   └── vite.config.ts
 └── spi/                             # Java SPI (Maven)
 ```
 
@@ -41,29 +51,19 @@ keycloak-dcm/
 
 | คำสั่ง | คำอธิบาย |
 |---|---|
-| `./scripts/dev.sh up` | Start local (Docker Compose + build) |
+| `./scripts/dev.sh up` | Start local (Docker Compose + build image) |
 | `./scripts/dev.sh down` | Stop local |
 | `./scripts/dev.sh logs` | ดู Keycloak log |
 | `./scripts/dev.sh realm` | Reload realm.json |
+| `./scripts/dev.sh spi` | Build SPI JAR แล้ว hot-reload เข้า container |
+| `./scripts/dev.sh theme` | Build theme JAR แล้ว hot-reload เข้า container |
 | `./scripts/build.sh` | Build image สำหรับ production |
 | `./scripts/build.sh 1.2.0` | Build พร้อม tag version |
-| `./scripts/deploy.sh staging` | Deploy ไป staging |
+| `./scripts/deploy.sh dev` | Deploy ไป dev |
+| `./scripts/deploy.sh sit` | Deploy ไป sit |
+| `./scripts/deploy.sh uat` | Deploy ไป uat |
 | `./scripts/deploy.sh prod` | Deploy ไป production |
 | `./scripts/deploy.sh realm` | อัปเดต realm บน K8s |
-
----
-
-## Build Docker Image
-
-```bash
-# Build image รวม theme + SPI
-docker build -t keycloak-dcm:latest .
-```
-
-> ต้องมี `npm install` ใน `theme/` ก่อน build ครั้งแรก:
-> ```bash
-> cd theme && npm install
-> ```
 
 ---
 
@@ -77,19 +77,11 @@ docker build -t keycloak-dcm:latest .
 
 ```bash
 # ครั้งแรก หรือเมื่อแก้ theme / SPI → build image ใหม่
-docker compose up -d --build
+./scripts/dev.sh up
 
 # ครั้งถัดไป (ไม่มีการเปลี่ยน theme/SPI)
 docker compose up -d
 ```
-
-**เมื่อแก้ไข:**
-
-| เปลี่ยนอะไร | คำสั่ง |
-|---|---|
-| `theme/` (React) | `docker compose up -d --build` |
-| `spi/` (Java) | `cd spi && mvn package -DskipTests` แล้ว `docker compose up -d --build` |
-| `realm/realm.json` | `docker compose restart keycloak` |
 
 ### 2. เปิดใน browser
 
@@ -107,25 +99,79 @@ docker compose up -d
 
 ---
 
-## Custom Theme (Keycloakify v11)
+## Local Development (Hot Reload)
+
+### Theme (Keycloakify)
+
+**วิธีที่ 1 — Storybook** (เร็วที่สุด, ไม่ต้องมี Keycloak)
 
 ```bash
-cd theme
-
-# Preview ด้วย Storybook
-npm run storybook
-
-# Eject หน้าที่ต้องการ custom
-npx keycloakify eject-page
+cd theme && yarn storybook
+# เปิด http://localhost:6006
 ```
 
-| ไฟล์ | คำอธิบาย |
-|---|---|
-| `theme/src/login/KcPage.tsx` | Router ของ login theme |
-| `theme/src/login/i18n.ts` | เพิ่ม/แก้ translation |
-| `theme/src/login/KcContext.ts` | Extend KcContext |
+**วิธีที่ 2 — ดูใน Keycloak จริง พร้อม HMR** (ต้องมี Java ติดตั้งในเครื่อง)
 
-หลัง deploy: `Realm Settings → Themes → Login Theme → เลือก theme ที่ build`
+```bash
+cd theme && yarn start-keycloak
+```
+
+**วิธีที่ 3 — Hot-reload เข้า container ที่รันอยู่**
+
+```bash
+./scripts/dev.sh theme
+# build theme JAR → copy เข้า container → restart keycloak (~30s)
+```
+
+### SPI (Java)
+
+ต้องมี Maven ติดตั้งในเครื่อง
+
+```bash
+./scripts/dev.sh spi
+# mvn package → copy JAR เข้า container → restart keycloak (~10s)
+```
+
+### สรุป workflow
+
+| แก้อะไร | คำสั่ง | เวลา |
+|---|---|---|
+| Theme UI (ดูใน Storybook) | `cd theme && yarn storybook` | HMR ทันที |
+| Theme UI (ดูใน Keycloak จริง) | `cd theme && yarn start-keycloak` | HMR ทันที |
+| Theme → test ใน Keycloak local | `./scripts/dev.sh theme` | ~30 วิ |
+| SPI | `./scripts/dev.sh spi` | ~10 วิ |
+| แก้ทั้ง theme + SPI พร้อมกัน | `./scripts/dev.sh up` | rebuild image |
+
+---
+
+## Custom Theme (Keycloakify v11 + Tailwind CSS)
+
+### Stack
+
+- React 18 + TypeScript + Vite
+- Tailwind CSS v3
+- Storybook v8
+
+### เพิ่มหน้าใหม่
+
+1. สร้าง component ใน `theme/src/login/pages/`
+2. Register ใน `theme/src/login/KcPage.tsx`
+3. สร้าง story ใน `theme/src/login/pages/*.stories.tsx`
+
+### Theme name
+
+Theme ชื่อ **dcm-theme** — หลัง deploy เลือกที่:
+
+```
+Realm Settings → Themes → Login Theme → dcm-theme
+```
+
+### Build
+
+```bash
+cd theme && yarn build-keycloak-theme
+# ได้ dist_keycloak/*.jar
+```
 
 ---
 
@@ -147,7 +193,94 @@ mvn package -DskipTests
 
 เปิดใช้ Event Listener: `Realm Settings → Events → Event listeners → dcm-event-listener`
 
-สร้าง SPI ใหม่: implement interface + Factory + ลง `META-INF/services/`
+---
+
+## Build Docker Image (Production)
+
+```bash
+./scripts/build.sh          # tag: keycloak-dcm:latest
+./scripts/build.sh 1.2.0    # tag: keycloak-dcm:1.2.0
+```
+
+---
+
+## CI/CD (Jenkins)
+
+Jenkinsfile อยู่ที่ `k8s/ci/Jenkinsfile`
+
+### ตั้งค่า Jenkins Job
+
+1. สร้าง Pipeline job
+2. ตั้ง **Script Path** เป็น `k8s/ci/Jenkinsfile`
+
+### Branch Strategy
+
+| Branch | Action |
+|---|---|
+| `dev` | build → push → deploy **dev** |
+| `sit` | build → push → deploy **sit** |
+| `uat` | build → push → deploy **uat** |
+| `main` | build → push → deploy **prod** |
+| อื่นๆ | build → push เท่านั้น |
+
+### Jenkins Credentials
+
+| Credential ID | Type | ค่า |
+|---|---|---|
+| `REGISTRY_URL` | Secret text | URL ของ container registry |
+| `registry-credentials` | Username/Password | login registry |
+| `kubeconfig-dev` | Secret file | kubeconfig สำหรับ dev cluster |
+| `kubeconfig-sit` | Secret file | kubeconfig สำหรับ sit cluster |
+| `kubeconfig-uat` | Secret file | kubeconfig สำหรับ uat cluster |
+| `kubeconfig-prod` | Secret file | kubeconfig สำหรับ prod cluster |
+| `keycloak-admin-user-<env>` | Secret text | Keycloak admin username |
+| `keycloak-admin-pass-<env>` | Secret text | Keycloak admin password |
+| `keycloak-db-url-<env>` | Secret text | JDBC URL ของ database |
+| `keycloak-db-username-<env>` | Secret text | Database username |
+| `keycloak-db-password-<env>` | Secret text | Database password |
+
+---
+
+## Deploy บน Kubernetes (Helm)
+
+### ข้อกำหนด
+
+- `helm` และ `kubectl` ติดตั้งในเครื่อง
+- kubeconfig ชี้ไปยัง cluster ที่ต้องการ
+
+### Deploy
+
+```bash
+# Deploy พร้อมกำหนด secrets
+helm upgrade --install keycloak k8s/chart/ \
+  -f k8s/values/prod.yaml \
+  --set secret.adminUser=admin \
+  --set secret.adminPassword=<password> \
+  --set secret.dbUrl=jdbc:postgresql://<host>:5432/keycloak \
+  --set secret.dbUsername=<user> \
+  --set secret.dbPassword=<password>
+```
+
+### Preview ก่อน deploy
+
+```bash
+helm template keycloak k8s/chart/ -f k8s/values/prod.yaml
+```
+
+### Env values
+
+| File | Replicas | Resources |
+|---|---|---|
+| `values/dev.yaml` | 1 | cpu: 250m–1, mem: 256Mi–512Mi |
+| `values/sit.yaml` | 1 | cpu: 250m–1, mem: 256Mi–512Mi |
+| `values/uat.yaml` | 2 | cpu: 500m–2, mem: 512Mi–1Gi |
+| `values/prod.yaml` | 3 | cpu: 1–4, mem: 1Gi–2Gi |
+
+### อัปเดต Realm
+
+```bash
+./scripts/deploy.sh realm
+```
 
 ---
 
@@ -161,12 +294,6 @@ Admin Console → เลือก realm "my-realm" → Users → Add user
 
 ไปที่ tab **Credentials** → Set password → ปิด Temporary
 
-### เข้า Account Console
-
-```
-http://localhost:8080/realms/my-realm/account/
-```
-
 ### ทดสอบด้วย curl
 
 ```bash
@@ -179,63 +306,6 @@ curl -s -X POST \
 # เช็ค userinfo
 curl -s http://localhost:8080/realms/my-realm/protocol/openid-connect/userinfo \
   -H "Authorization: Bearer <access_token>" | jq .
-```
-
----
-
-## Deploy บน Production
-
-**1. แก้ `k8s/keycloak/deployment.yaml`:**
-
-```yaml
-- name: KC_HOSTNAME
-  value: "keycloak.example.com"
-- name: KC_HOSTNAME_STRICT
-  value: "true"
-- name: KC_HOSTNAME_PORT   # ลบบรรทัดนี้ออก
-```
-
-**2. แก้ `k8s/keycloak/ingress.yaml`:**
-
-```yaml
-tls:
-  - hosts: [keycloak.example.com]
-    secretName: keycloak-tls
-rules:
-  - host: keycloak.example.com
-```
-
-**3. เปลี่ยน credentials ใน secrets:**
-
-```bash
-echo -n "your-strong-password" | base64
-# แก้ k8s/keycloak/secret.yaml และ k8s/postgres/secret.yaml
-```
-
-**4. ตั้งค่า secrets ใน overlay (gitignored):**
-
-```bash
-# encode credentials
-echo -n "your-admin" | base64
-echo -n "your-strong-password" | base64
-
-# แก้ k8s/overlays/prod/keycloak-secret.yaml
-# แก้ k8s/overlays/prod/postgres-secret.yaml
-```
-
-**5. Apply prod:**
-
-```bash
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/postgres/
-kubectl apply -f k8s/keycloak/
-kubectl apply -f k8s/envs/prod/
-```
-
-### TLS ด้วย cert-manager
-
-```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
 ```
 
 ---
@@ -261,12 +331,15 @@ docker compose down -v
 ```bash
 # Log
 kubectl logs -n keycloak -l app=keycloak -f
-kubectl logs -n keycloak -l app=postgres -f
 
 # Health check
 kubectl port-forward svc/keycloak 9000:9000 -n keycloak
 curl http://localhost:9000/health/ready
 
+# Helm rollback
+helm rollback keycloak -n keycloak
+
 # ลบทุกอย่าง
+helm uninstall keycloak -n keycloak
 kubectl delete namespace keycloak
 ```

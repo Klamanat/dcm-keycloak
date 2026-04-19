@@ -10,10 +10,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - keycloak-staging.example.com   # TODO: เปลี่ยนเป็น hostname จริง
-      secretName: keycloak-tls-staging
+        - {{ .Values.ingress.hostname }}
+      secretName: {{ .Values.ingress.tlsSecret }}
   rules:
-    - host: keycloak-staging.example.com
+    - host: {{ .Values.ingress.hostname }}
       http:
         paths:
           - path: /

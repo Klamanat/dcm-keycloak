@@ -6,7 +6,7 @@ metadata:
   labels:
     app: keycloak
 spec:
-  replicas: 1
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       app: keycloak
@@ -20,41 +20,32 @@ spec:
         runAsUser: 1000
         fsGroup: 1000
       terminationGracePeriodSeconds: 60
-      initContainers:
-        - name: wait-for-postgres
-          image: bitnami/postgresql:latest
-          imagePullPolicy: IfNotPresent
-          command:
-            - sh
-            - -c
-            - until pg_isready -h postgres -p 5432 -U keycloak -t 2; do echo "waiting for postgres..."; sleep 2; done
       containers:
         - name: keycloak
-          image: keycloak-dcm:latest
-          imagePullPolicy: IfNotPresent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - start
             - --optimized
             - --import-realm
-
           env:
-            # ===== Database =====
             - name: KC_DB
               value: postgres
             - name: KC_DB_URL
-              value: jdbc:postgresql://postgres:5432/keycloak
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-secret
+                  key: KC_DB_URL
             - name: KC_DB_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: postgres-secret
-                  key: POSTGRES_USER
+                  name: keycloak-secret
+                  key: KC_DB_USERNAME
             - name: KC_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: postgres-secret
-                  key: POSTGRES_PASSWORD
-
-            # ===== Admin =====
+                  name: keycloak-secret
+                  key: KC_DB_PASSWORD
             - name: KEYCLOAK_ADMIN
               valueFrom:
                 secretKeyRef:
@@ -65,43 +56,33 @@ spec:
                 secretKeyRef:
                   name: keycloak-secret
                   key: KEYCLOAK_ADMIN_PASSWORD
-
-            # ===== Network =====
             - name: KC_PROXY_HEADERS
               value: xforwarded
             - name: KC_HTTP_ENABLED
               value: "true"
-
-            # ===== Observability =====
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_METRICS_ENABLED
               value: "true"
-
-          # ค่า env ที่ต่างกันแต่ละ env อ่านจาก ConfigMap (envs/<env>/keycloak-env.yaml)
           envFrom:
             - configMapRef:
                 name: keycloak-env
-
           ports:
             - name: http
               containerPort: 8080
             - name: management
               containerPort: 9000
-
           volumeMounts:
             - name: realm-config
               mountPath: /opt/keycloak/data/import
               readOnly: true
-
           resources:
             requests:
-              cpu: 500m
-              memory: 512Mi
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}
             limits:
-              cpu: "2"
-              memory: 1Gi
-
+              cpu: {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}
           startupProbe:
             httpGet:
               path: /health/started
@@ -109,7 +90,6 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 10
             failureThreshold: 20
-
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -117,7 +97,6 @@ spec:
             initialDelaySeconds: 0
             periodSeconds: 10
             failureThreshold: 3
-
           livenessProbe:
             httpGet:
               path: /health/live
@@ -125,13 +104,11 @@ spec:
             initialDelaySeconds: 0
             periodSeconds: 30
             failureThreshold: 3
-
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
                 - ALL
-
       volumes:
         - name: realm-config
           configMap:

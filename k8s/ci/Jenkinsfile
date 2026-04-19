@@ -1,0 +1,139 @@
+// ============================================================
+// Jenkinsfile — keycloak-dcm
+// ============================================================
+// Branch strategy:
+//   dev     → deploy to dev
+//   sit     → deploy to sit
+//   uat     → deploy to uat
+//   main    → deploy to prod
+//   อื่นๆ   → build + push เท่านั้น
+//
+// Script Path (Jenkins): k8s/ci/Jenkinsfile
+// ============================================================
+
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME    = "keycloak-dcm"
+        REGISTRY      = credentials('REGISTRY_URL')
+        REGISTRY_CRED = 'registry-credentials'
+    }
+
+    stages {
+
+        stage('Init') {
+            steps {
+                script {
+                    env.DEPLOY_ENV    = resolveEnv(env.BRANCH_NAME)
+                    env.KUBECONFIG_ID = resolveKubeconfig(env.DEPLOY_ENV)
+                    env.IMAGE_TAG     = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
+                    env.IMAGE_FULL    = "${env.REGISTRY}/${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+
+                    echo "Branch     : ${env.BRANCH_NAME}"
+                    echo "Deploy env : ${env.DEPLOY_ENV ?: 'none (build only)'}"
+                    echo "Image      : ${env.IMAGE_FULL}"
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh """
+                    docker build \\
+                        --build-arg KC_BUILD=true \\
+                        -t ${env.IMAGE_FULL} \\
+                        .
+                """
+            }
+        }
+
+        stage('Push') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: env.REGISTRY_CRED,
+                    usernameVariable: 'REG_USER',
+                    passwordVariable: 'REG_PASS'
+                )]) {
+                    sh """
+                        echo \$REG_PASS | docker login ${env.REGISTRY} -u \$REG_USER --password-stdin
+                        docker push ${env.IMAGE_FULL}
+                    """
+                }
+            }
+        }
+
+        stage('Deploy') {
+            when {
+                expression { env.DEPLOY_ENV != null && env.DEPLOY_ENV != '' }
+            }
+            steps {
+                withCredentials([
+                    file(credentialsId: env.KUBECONFIG_ID, variable: 'KUBECONFIG'),
+                    string(credentialsId: "keycloak-admin-user-${env.DEPLOY_ENV}",     variable: 'KC_ADMIN_USER'),
+                    string(credentialsId: "keycloak-admin-pass-${env.DEPLOY_ENV}",     variable: 'KC_ADMIN_PASS'),
+                    string(credentialsId: "keycloak-db-url-${env.DEPLOY_ENV}",         variable: 'KC_DB_URL'),
+                    string(credentialsId: "keycloak-db-username-${env.DEPLOY_ENV}",    variable: 'KC_DB_USER'),
+                    string(credentialsId: "keycloak-db-password-${env.DEPLOY_ENV}",    variable: 'KC_DB_PASS'),
+                ]) {
+                    sh """
+                        export KUBECONFIG=\$KUBECONFIG
+
+                        helm upgrade --install keycloak k8s/chart/ \\
+                            -f k8s/values/${env.DEPLOY_ENV}.yaml \\
+                            --set image.repository=${env.REGISTRY}/${env.IMAGE_NAME} \\
+                            --set image.tag=${env.IMAGE_TAG} \\
+                            --set secret.adminUser=\$KC_ADMIN_USER \\
+                            --set secret.adminPassword=\$KC_ADMIN_PASS \\
+                            --set secret.dbUrl=\$KC_DB_URL \\
+                            --set secret.dbUsername=\$KC_DB_USER \\
+                            --set secret.dbPassword=\$KC_DB_PASS \\
+                            --atomic \\
+                            --timeout 5m
+
+                        # อัปเดต realm ConfigMap
+                        kubectl delete configmap keycloak-realm -n keycloak --ignore-not-found
+                        kubectl create configmap keycloak-realm \\
+                            --from-file=realm.json=realm/realm.json \\
+                            -n keycloak
+
+                        kubectl rollout restart deployment/keycloak -n keycloak
+                        kubectl rollout status deployment/keycloak -n keycloak --timeout=300s
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker image prune -f --filter "dangling=true"'
+        }
+        success {
+            echo "✔ Pipeline สำเร็จ — ${env.IMAGE_FULL} → ${env.DEPLOY_ENV ?: 'no deploy'}"
+        }
+        failure {
+            echo "✘ Pipeline ล้มเหลว branch=${env.BRANCH_NAME}"
+        }
+    }
+}
+
+def resolveEnv(String branch) {
+    switch (branch) {
+        case 'dev':  return 'dev'
+        case 'sit':  return 'sit'
+        case 'uat':  return 'uat'
+        case 'main': return 'prod'
+        default:     return ''
+    }
+}
+
+def resolveKubeconfig(String deployEnv) {
+    switch (deployEnv) {
+        case 'dev':  return 'kubeconfig-dev'
+        case 'sit':  return 'kubeconfig-sit'
+        case 'uat':  return 'kubeconfig-uat'
+        case 'prod': return 'kubeconfig-prod'
+        default:     return 'kubeconfig-dev'
+    }
+}

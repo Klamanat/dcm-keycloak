@@ -1,0 +1,15 @@
+hostname: keycloak.example.com
+hostnameStrict: "true"
+
+ingress:
+  hostname: keycloak.example.com
+  tlsSecret: keycloak-tls
+
+replicaCount: 3
+resources:
+  requests:
+    cpu: "1"
+    memory: 1Gi
+  limits:
+    cpu: "4"
+    memory: 2Gi
