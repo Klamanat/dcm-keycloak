@@ -146,52 +146,21 @@ cd theme && yarn start-keycloak
 
 ## Custom Theme (Keycloakify v11 + Tailwind CSS)
 
-### Stack
-
-- React 18 + TypeScript + Vite
-- Tailwind CSS v3
-- Storybook v8
-
-### เพิ่มหน้าใหม่
-
-1. สร้าง component ใน `theme/src/login/pages/`
-2. Register ใน `theme/src/login/KcPage.tsx`
-3. สร้าง story ใน `theme/src/login/pages/*.stories.tsx`
-
-### Theme name
-
-Theme ชื่อ **dcm-theme** — หลัง deploy เลือกที่:
-
-```
-Realm Settings → Themes → Login Theme → dcm-theme
-```
-
-### Build
+ดูรายละเอียดทั้งหมดใน [theme/README.md](theme/README.md)
 
 ```bash
 cd theme && yarn build-keycloak-theme
-# ได้ dist_keycloak/*.jar
 ```
 
 ---
 
 ## Custom SPI (Java)
 
+ดูรายละเอียดทั้งหมดใน [spi/README.md](spi/README.md)
+
 ```bash
-cd spi
-mvn package -DskipTests
-# ได้ target/keycloak-spi-1.0.0.jar
+cd spi && mvn package -DskipTests
 ```
-
-| SPI | Interface | ตัวอย่างที่มีอยู่ |
-|---|---|---|
-| Event Listener | `EventListenerProvider` | `DcmEventListenerProvider` |
-| Authenticator | `Authenticator` | — |
-| User Storage | `UserStorageProvider` | — |
-| REST endpoint | `RealmResourceProvider` | — |
-| Token Mapper | `ProtocolMapper` | — |
-
-เปิดใช้ Event Listener: `Realm Settings → Events → Event listeners → dcm-event-listener`
 
 ---
 

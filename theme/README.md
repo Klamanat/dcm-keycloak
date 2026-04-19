@@ -1,58 +1,103 @@
-<p align="center">
-    <i>🚀 <a href="https://keycloakify.dev">Keycloakify</a> v11 starter 🚀</i>
-    <br/>
-    <br/>
-</p>
+# dcm-theme
 
-# Quick start
+Custom Keycloak login theme สำหรับ DCM — สร้างด้วย Keycloakify v11 + React + Tailwind CSS
 
-```bash
-git clone https://github.com/keycloakify/keycloakify-starter
-cd keycloakify-starter
-yarn install # Or use an other package manager, just be sure to delete the yarn.lock if you use another package manager.
+## Stack
+
+- [Keycloakify v11](https://keycloakify.dev) — React → Keycloak JAR
+- React 18 + TypeScript + Vite
+- Tailwind CSS v3
+- Storybook v8
+
+## โครงสร้าง
+
+```
+theme/
+├── src/
+│   ├── login/
+│   │   ├── KcPage.tsx           # Router — เลือก component ตาม pageId
+│   │   ├── KcContext.ts         # Extend KcContext (custom properties)
+│   │   ├── i18n.ts              # Translation
+│   │   ├── KcPageStory.tsx      # Storybook helper
+│   │   └── pages/
+│   │       ├── Login.tsx        # Custom login page (Tailwind)
+│   │       └── Login.stories.tsx
+│   └── index.css                # Tailwind directives
+├── tailwind.config.js
+├── postcss.config.js
+├── vite.config.ts               # Keycloakify plugin (themeName: dcm-theme)
+└── package.json
 ```
 
-# Testing the theme locally
+## Development
 
-[Documentation](https://docs.keycloakify.dev/testing-your-theme)
-
-# How to customize the theme
-
-[Documentation](https://docs.keycloakify.dev/css-customization)
-
-# Building the theme
-
-You need to have [Maven](https://maven.apache.org/) installed to build the theme (Maven >= 3.1.1, Java >= 7).  
-The `mvn` command must be in the $PATH.
-
--   On macOS: `brew install maven`
--   On Debian/Ubuntu: `sudo apt-get install maven`
--   On Windows: `choco install openjdk` and `choco install maven` (Or download from [here](https://maven.apache.org/download.cgi))
+### Storybook (เร็วที่สุด)
 
 ```bash
-npm run build-keycloak-theme
+yarn storybook
+# เปิด http://localhost:6006
 ```
 
-Note that by default Keycloakify generates multiple .jar files for different versions of Keycloak.  
-You can customize this behavior, see documentation [here](https://docs.keycloakify.dev/features/compiler-options/keycloakversiontargets).
+### ดูใน Keycloak จริง พร้อม HMR
 
-# Initializing the account theme
+ต้องมี Java ติดตั้งในเครื่อง
 
 ```bash
-npx keycloakify initialize-account-theme
+yarn start-keycloak
 ```
 
-# Initializing the email theme
+Keycloakify จะ download Keycloak และ proxy theme จาก Vite dev server อัตโนมัติ
+
+## เพิ่มหน้าใหม่
+
+**1. สร้าง component** ใน `src/login/pages/`
+
+```tsx
+// src/login/pages/Register.tsx
+import type { PageProps } from "keycloakify/login/pages/PageProps";
+
+export default function Register(props: PageProps<...>) {
+    const { kcContext, i18n } = props;
+    return ( /* Tailwind JSX */ );
+}
+```
+
+**2. Register ใน `KcPage.tsx`**
+
+```tsx
+import Register from "./pages/Register";
+
+case "register.ftl":
+    return <Register kcContext={kcContext} i18n={i18n} ... />;
+```
+
+**3. สร้าง Story**
+
+```tsx
+// src/login/pages/Register.stories.tsx
+const { KcPageStory } = createKcPageStory({ pageId: "register.ftl" });
+export const Default: Story = { args: {} };
+```
+
+ดู pageId ทั้งหมดที่รองรับ: [Keycloakify Docs](https://docs.keycloakify.dev/v/v11/keycloak-pages)
+
+## Build
+
+ต้องมี Maven ติดตั้งในเครื่อง (keycloakify ใช้สร้าง JAR)
+
+- macOS: `brew install maven`
+- Ubuntu: `sudo apt-get install maven`
+- Windows: `choco install maven`
 
 ```bash
-npx keycloakify initialize-email-theme
+yarn build-keycloak-theme
+# ได้ dist_keycloak/dcm-theme-*.jar
 ```
 
-# GitHub Actions
+## Deploy
 
-The starter comes with a generic GitHub Actions workflow that builds the theme and publishes
-the jars [as GitHub releases artifacts](https://github.com/keycloakify/keycloakify-starter/releases/tag/v10.0.0).  
-To release a new version **just update the `package.json` version and push**.
+หลัง deploy image ไปยัง Keycloak แล้ว เลือก theme ที่:
 
-To enable the workflow go to your fork of this repository on GitHub then navigate to:
-`Settings` > `Actions` > `Workflow permissions`, select `Read and write permissions`.
+```
+Realm Settings → Themes → Login Theme → dcm-theme
+```
