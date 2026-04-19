@@ -1,17 +1,20 @@
 # ==============================================================
 # Stage 1: Build Keycloakify theme (React → JAR)
 # ==============================================================
-FROM node:20-alpine AS theme-builder
+FROM node:20 AS theme-builder
+
+# keycloakify build ต้องการ Maven เพื่อสร้าง JAR
+RUN apt-get update -qq && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY theme/package*.json ./
-RUN npm ci
+COPY theme/package.json theme/yarn.lock ./
+RUN yarn install --frozen-lockfile
 
 COPY theme/ .
 
 # tsc + vite build + keycloakify build → dist_keycloak/*.jar
-RUN npm run build-keycloak-theme
+RUN yarn build-keycloak-theme
 
 # ==============================================================
 # Stage 2: Build SPI (Java Maven → JAR)
@@ -30,7 +33,7 @@ COPY spi/src ./src
 RUN mvn package -DskipTests -q
 
 # ==============================================================
-# Stage 3: Pre-build Keycloak พร้อม providers ทั้งหมด
+# Stage 3: Keycloak + providers
 # ==============================================================
 FROM quay.io/keycloak/keycloak:26.5.7 AS keycloak-builder
 
@@ -40,8 +43,10 @@ COPY --from=theme-builder /app/dist_keycloak/*.jar /opt/keycloak/providers/
 # Copy SPI JAR
 COPY --from=spi-builder /app/target/keycloak-spi-*.jar /opt/keycloak/providers/
 
-# Pre-build Keycloak เพื่อ register providers (ลด startup time + --optimized)
-RUN /opt/keycloak/bin/kc.sh build
+# KC_BUILD=true  → production: pre-build เพื่อใช้ start --optimized
+# KC_BUILD=false → local dev:  ข้ามขั้นตอนนี้ เพราะ start-dev โหลด providers เองได้
+ARG KC_BUILD=true
+RUN if [ "$KC_BUILD" = "true" ]; then /opt/keycloak/bin/kc.sh build; fi
 
 # ==============================================================
 # Final image

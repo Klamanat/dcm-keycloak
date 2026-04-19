@@ -7,20 +7,16 @@ Keycloak 26.5.7 + PostgreSQL บน Kubernetes พร้อม Custom Theme (Key
 ```
 keycloak-dcm/
 ├── Dockerfile
+├── docker-compose.yml               # Local development
 ├── k8s/
 │   ├── namespace.yaml
 │   ├── keycloak/
-│   │   ├── deployment.yaml          # shared ทุก env (อ่านจาก ConfigMap keycloak-env)
+│   │   ├── deployment.yaml          # shared ทุก env
 │   │   └── service.yaml
 │   ├── postgres/
 │   │   ├── deployment.yaml
 │   │   └── service.yaml
 │   └── envs/
-│       ├── local/
-│       │   ├── keycloak-env.yaml    # ConfigMap: KC_HOSTNAME=localhost
-│       │   ├── keycloak-secret.yaml
-│       │   ├── postgres-secret.yaml
-│       │   └── postgres-pvc.yaml    # 1Gi
 │       ├── staging/
 │       │   ├── keycloak-env.yaml    # ConfigMap: KC_HOSTNAME=staging...
 │       │   ├── keycloak-secret.yaml # gitignored
@@ -41,6 +37,22 @@ keycloak-dcm/
 
 ---
 
+## Scripts
+
+| คำสั่ง | คำอธิบาย |
+|---|---|
+| `./scripts/dev.sh up` | Start local (Docker Compose + build) |
+| `./scripts/dev.sh down` | Stop local |
+| `./scripts/dev.sh logs` | ดู Keycloak log |
+| `./scripts/dev.sh realm` | Reload realm.json |
+| `./scripts/build.sh` | Build image สำหรับ production |
+| `./scripts/build.sh 1.2.0` | Build พร้อม tag version |
+| `./scripts/deploy.sh staging` | Deploy ไป staging |
+| `./scripts/deploy.sh prod` | Deploy ไป production |
+| `./scripts/deploy.sh realm` | อัปเดต realm บน K8s |
+
+---
+
 ## Build Docker Image
 
 ```bash
@@ -55,61 +67,31 @@ docker build -t keycloak-dcm:latest .
 
 ---
 
-## Run บน Local
+## Run บน Local (Docker Compose)
 
 ### ข้อกำหนด
 
-- Docker Desktop พร้อม Kubernetes เปิดอยู่
-- `kubectl` ติดตั้งและ config แล้ว
+- Docker Desktop
 
-### 1. Apply manifests
-
-```bash
-# Shared resources
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/postgres/
-kubectl apply -f k8s/keycloak/
-
-# Local-specific (secrets, ConfigMap, PVC)
-kubectl apply -f k8s/envs/local/
-```
-
-### 1.1 สร้าง ConfigMap สำหรับ Realm
-
-> **สำคัญ:** ใช้เฉพาะ `realm.json` เท่านั้น — **ห้ามใส่ `realm-master.json`** เพราะจะทำให้ Keycloak crash (`adminRealm is null`)
+### 1. Start
 
 ```bash
-# สร้าง ConfigMap ครั้งแรก
-kubectl create configmap keycloak-realm \
-  --from-file=realm.json=realm/realm.json \
-  -n keycloak
+# ครั้งแรก หรือเมื่อแก้ theme / SPI → build image ใหม่
+docker compose up -d --build
+
+# ครั้งถัดไป (ไม่มีการเปลี่ยน theme/SPI)
+docker compose up -d
 ```
 
-**อัปเดตเมื่อแก้ไข realm.json:**
+**เมื่อแก้ไข:**
 
-```bash
-kubectl delete configmap keycloak-realm -n keycloak
-kubectl create configmap keycloak-realm \
-  --from-file=realm.json=realm/realm.json \
-  -n keycloak
-kubectl rollout restart deployment/keycloak -n keycloak
-```
+| เปลี่ยนอะไร | คำสั่ง |
+|---|---|
+| `theme/` (React) | `docker compose up -d --build` |
+| `spi/` (Java) | `cd spi && mvn package -DskipTests` แล้ว `docker compose up -d --build` |
+| `realm/realm.json` | `docker compose restart keycloak` |
 
-### 2. รอให้ทุก pod พร้อม
-
-```bash
-kubectl get pods -n keycloak -w
-```
-
-ทุก pod ต้องเป็น `Running` และ `READY 1/1`
-
-### 3. Port-forward
-
-```bash
-kubectl port-forward svc/keycloak 8080:80 -n keycloak
-```
-
-### 4. เปิดใน browser
+### 2. เปิดใน browser
 
 | URL | คำอธิบาย |
 |---|---|
@@ -260,11 +242,25 @@ kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/do
 
 ## Troubleshooting
 
-```bash
-# Log Keycloak
-kubectl logs -n keycloak -l app=keycloak -f
+**Local (Docker Compose):**
 
-# Log PostgreSQL
+```bash
+# Log
+docker compose logs keycloak -f
+docker compose logs postgres -f
+
+# Restart
+docker compose restart keycloak
+
+# ลบทุกอย่าง (รวม volume)
+docker compose down -v
+```
+
+**Staging / Prod (Kubernetes):**
+
+```bash
+# Log
+kubectl logs -n keycloak -l app=keycloak -f
 kubectl logs -n keycloak -l app=postgres -f
 
 # Health check
