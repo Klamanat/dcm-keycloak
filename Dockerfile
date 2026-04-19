@@ -9,7 +9,7 @@ RUN apt-get update -qq && apt-get install -y maven && rm -rf /var/lib/apt/lists/
 WORKDIR /app
 
 COPY theme/package.json theme/yarn.lock ./
-RUN yarn install --frozen-lockfile
+RUN yarn install
 
 COPY theme/ .
 
